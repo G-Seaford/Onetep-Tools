@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "onetep_tools"
+version = "1.2.0"
+description = "Utilities for generating ONETEP input scripts and related helpers."
+readme = "README.md"
+authors = [{ name = "Gianluca Seaford", email = "Luca.Seaford@warwick.ac.uk" }]
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = []
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+[tool.setuptools]
+packages = ["onetep_tools"]
+package-dir = { "onetep_tools" = "." }
