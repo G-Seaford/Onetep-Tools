@@ -18,6 +18,6 @@ classifiers = [
   "Operating System :: OS Independent",
 ]
 
-[tool.setuptools]
-packages = ["onetep_tools"]
-package-dir = { "onetep_tools" = "." }
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["onetep_tools"]

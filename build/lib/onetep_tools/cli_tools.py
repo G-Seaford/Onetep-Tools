@@ -32,6 +32,7 @@ class OnetepCLI:
         io.add_argument("-i", "--input", type=Path, required=True, help="Input file or directory of structures (.xyz/.extxyz/.traj).",)
         io.add_argument("-o", "--output", type=Path, required=True,help="Output directory root; sub-folders created per structure/bias.",)
         io.add_argument("--seed", type=str, default=None,help="Job/file seed; defaults to structure stem (or stem-index for multi-frames).",)
+        io.add_argument("-d", "--subdir", type=str, default="", help="Optional subdirectory inserted under the output root (e.g. 'Inputs' or 'Run1').",)
 
         # Core numerics & physics
         core = p.add_argument_group("Core numerics and physics")
@@ -41,8 +42,16 @@ class OnetepCLI:
         core.add_argument("--kgrid", type=self._csv_ints3, default=None, help="K-point grid as 'kx,ky,kz'.")
         core.add_argument("--kpar-groups", type=int, default=None, help="Number of k-par groups.")
         core.add_argument("--temperature", type=float, default=None, help="System temperature (K).")
-        core.add_argument("--symmetry", dest="symmetry", action=argparse.BooleanOptionalAction, default=None, help="Enable/disable symmetry AND time reversal together.",)
+        core.add_argument("--symmetry", dest="symmetry", action=argparse.BooleanOptionalAction, default=None, help="Enable/disable symmetry.",)
+        core.add_argument("--time-reversal", dest="time_reversal",action=argparse.BooleanOptionalAction, default=None, help="Enable/disable time reversal.")
         core.add_argument("--use-paw", dest="use_paw", action=argparse.BooleanOptionalAction, default=None, help="Enable/disable PAW.",)
+        core.add_argument("--fast-density", action=argparse.BooleanOptionalAction, default=None)
+        core.add_argument("--fast-locpot-int", action=argparse.BooleanOptionalAction, default=None)
+        core.add_argument("--fast-ngwf-gradient", action=argparse.BooleanOptionalAction, default=None)
+        core.add_argument("--trimmed-boxes-threshold", type=float, default=None)
+        core.add_argument("--threads-num-fftboxes", type=int, default=None)
+        core.add_argument("--threads-gpu", type=int, default=None)
+        core.add_argument("--comms-group-size", type=int, default=None)
 
         # Geometry (vacuum & axes)
         geom = p.add_argument_group("Geometry (vacuum and axes)")
@@ -81,25 +90,42 @@ class OnetepCLI:
         solv.add_argument("--implicit-ions", type=self._csv_implicit_ions, default=None, help="Implicit ions as 'H:+1:0.1,AuCl4:-1:0.1'. Only used if PB electrolyte is enabled.",)
         solv.add_argument("--solvation-radii", type=self._csv_map_str_float, default=None, help="Solvent radii (Bohr) as 'Au:3.14,C:3.20'.",)
 
-        # NGWF
+        # NGWFs
         ng = p.add_argument_group("NGWF")
         ng.add_argument("--ngwf-count", type=self._csv_map_str_int, default=None, help="Species→NGWF count, e.g. 'C:4,Au:6'.")
         ng.add_argument("--ngwf-radius", type=self._csv_map_str_float, default=None, help="Species→NGWF radius (Bohr), e.g. 'C:10.0,Au:12.0'.")
+        ng.add_argument("--maxit-ngwf-cg", type=int, default=None)
+        ng.add_argument("--ngwf-threshold-orig", type=float, default=None)
 
         # Output formatting
         fmt = p.add_argument_group("Output formatting")
         fmt.add_argument("--output-format", choices=("none", "dx", "cube", "both"), default=None,
             help=("Post-processing output choice. 'none' disables do_properties; 'dx' or 'cube' enables the respective format; 'both' enables both."),
         )
+        fmt.add_argument("--timings-level", type=int, default=None)
 
         # ONETEP executable root + binary name
         exe = p.add_argument_group("ONETEP executable/launcher")
         exe.add_argument("--onetep-root", type=Path, default=None, help="Root of an ONETEP build; binary expected in ROOT/bin and launcher in ROOT/utils.",)
         exe.add_argument("--binary-name", type=str, default=None,help="ONETEP binary name inside ROOT/bin (e.g. 'onetep.blythe_gnu').",)
 
+        # SLURM parameters
+        slurm = p.add_argument_group("SLURM parameters")
+        slurm.add_argument("-s", "--system", type=str, default=None, choices=("Blythe", "Sulis", "Isambard-AI", "Archer2"), 
+                           help="Target machine preset for SBATCH generation.",
+        )
+        slurm.add_argument("--partition", type=str, default=None, help="SLURM partition/queue name.")
+        slurm.add_argument("--nodes", type=int, default=None, help="Number of nodes.")
+        slurm.add_argument("--gpus", type=int, default=None, help="GPUs per node (enables GPU SBATCH directives).")
+        slurm.add_argument("--tasks-per-node", type=int, default=None, help="MPI ranks per node.")
+        slurm.add_argument("--cpus-per-task", type=int, default=None, help="OpenMP threads per MPI rank.")
+        slurm.add_argument("--mem-per-cpu", dest="mem_per_cpu_mb", type=int, default=None, help="Memory per CPU (MB).")
+        slurm.add_argument("--walltime", dest="walltime", type=str, default=None, help="Runtime for job (HH:mm:ss).")
+
         # Logging
         log = p.add_argument_group("Logging")
         log.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity (-v, -vv).")
+        log.add_argument("--dump-keywords", action="store_true", help="Print resolved keyword dictionary per structure/bias and exit.")
         return p
 
     def parse(self, argv: list[str] | None) -> argparse.Namespace:
@@ -122,28 +148,39 @@ class OnetepCLI:
         # Core
         if args.task is not None: core = replace(core, task=args.task)
         if args.xc is not None: core = replace(core, xc_functional=args.xc)
-        if args.cutoff is not None: core = replace(core, cutoff_energy_ev=args.cutoff)
+        if args.cutoff is not None: core = replace(core, cutoff_energy=args.cutoff)
         if args.kgrid is not None: core = replace(core, kpoint_grid=args.kgrid)
         if args.kpar_groups is not None: core = replace(core, kpar_groups=args.kpar_groups)
         if args.temperature is not None: core = replace(core, temperature_k=args.temperature)
-        if args.symmetry is not None: sym = bool(args.symmetry); core = replace(core, use_symmetry=sym, use_time_reversal=sym)
+        if args.symmetry is not None: core = replace(core, use_symmetry=bool(args.symmetry))
+        if args.time_reversal is not None: core = replace(core, use_time_reversal=bool(args.time_reversal))
         if args.use_paw is not None: core = replace(core, use_paw=bool(args.use_paw))
 
+        # GPU and performance options
+        if args.fast_density is not None: core = replace(core, fast_density=bool(args.fast_density))
+        if args.fast_locpot_int is not None: core = replace(core, fast_locpot_int=bool(args.fast_locpot_int))
+        if args.fast_ngwf_gradient is not None: core = replace(core, fast_ngwf_gradient=bool(args.fast_ngwf_gradient))
+        if args.trimmed_boxes_threshold is not None: core = replace(core, trimmed_boxes_threshold=args.trimmed_boxes_threshold)
+        if args.threads_num_fftboxes is not None: core = replace(core, threads_num_fftboxes=args.threads_num_fftboxes)
+        if args.threads_gpu is not None: core = replace(core, threads_gpu=args.threads_gpu)
+        if args.comms_group_size is not None: core = replace(core, comms_group_size=args.comms_group_size)
+
         # Geometry
-        if getattr(args, "vacuum", None) is not None: geom = replace(geom, vacuum=float(args.vacuum))
-        if getattr(args, "vacuum_axes", None) is not None: geom = replace(geom, vacuum_axes=tuple(args.vacuum_axes))
-        if getattr(args, "apply_vacuum", None) is not None: geom = replace(geom, apply_vacuum=bool(args.apply_vacuum))
+        if args.vacuum is not None: geom = replace(geom, vacuum=float(args.vacuum))
+        if args.vacuum_axes is not None: geom = replace(geom, vacuum_axes=tuple(args.vacuum_axes))
+        if args.apply_vacuum is not None: geom = replace(geom, apply_vacuum=bool(args.apply_vacuum))
         
         # Geometry constraints
         constraints_map = {}
-        if getattr(args, "use_constraints", None) is not None: core = replace(core, geom_constraints=replace(core.geom_constraints, use_constraints=bool(args.use_constraints),),)
-        if getattr(args, "constraints", None) is not None: constraints_map.update(args.constraints)
-        if getattr(args, "constraints_file", None) is not None: constraints_map.update(self._load_constraints_file(args.constraints_file))
+        if args.use_constraints is not None: core = replace(core, geom_constraints=replace(core.geom_constraints, use_constraints=bool(args.use_constraints),),)
+        if args.constraints is not None: constraints_map.update(args.constraints)
+        if args.constraints_file is not None: constraints_map.update(self._load_constraints_file(args.constraints_file))
         if constraints_map: core = replace(core, geom_constraints=replace(core.geom_constraints, constraints=constraints_map,),)
         if (constraints_map or args.use_constraints) and args.task not in (None, "GeometryOptimization"): logging.warning("Species constraints provided but task is '%s'.", args.task,)
+        
         # Pseudopotentials
         if args.pseudo_path is not None: core = replace(core, pseudo_path=args.pseudo_path)
-        if getattr(args, "pseudos", None) is not None: core = replace(core, pseudopotentials=args.pseudos)
+        if args.pseudos is not None: core = replace(core, pseudopotentials=args.pseudos)
 
         # eDFT / GC eDFT
         if args.enable_edft is not None: edft = replace(edft, enable_edft=bool(args.enable_edft))
@@ -164,13 +201,16 @@ class OnetepCLI:
         # NGWF
         if args.ngwf_count is not None: ng = replace(ng, ngwfs_count=args.ngwf_count)
         if args.ngwf_radius is not None: ng = replace(ng, ngwfs_radius=args.ngwf_radius)
+        if args.maxit_ngwf_cg is not None: ng = replace(ng, maxit_ngwf_cg=args.maxit_ngwf_cg)
+        if args.ngwf_threshold_orig is not None: ng = replace(ng, ngwf_threshold_orig=args.ngwf_threshold_orig)
 
         # Output formatting policy
         if args.output_format is not None:
-            if args.output_format == "none": io = replace(io, dx_format=False, cube_format=False); core = replace(core, write_outputs=False)
-            elif args.output_format == "dx": io = replace(io, dx_format=True, cube_format=False); core = replace(core, write_outputs=True)
-            elif args.output_format == "cube": io = replace(io, dx_format=False, cube_format=True); core = replace(core, write_outputs=True)
-            elif args.output_format == "both": io = replace(io, dx_format=True, cube_format=True); core = replace(core, write_outputs=True)
+            if args.output_format == "none": io = replace(io, dx_format=False, cube_format=False); core = replace(core, write_properties=False)
+            elif args.output_format == "dx": io = replace(io, dx_format=True, cube_format=False); core = replace(core, write_properties=True)
+            elif args.output_format == "cube": io = replace(io, dx_format=False, cube_format=True); core = replace(core, write_properties=True)
+            elif args.output_format == "both": io = replace(io, dx_format=True, cube_format=True); core = replace(core, write_properties=True)
+        if args.timings_level is not None: io = replace(io, timings_level=args.timings_level)
 
         # Executable path override (root + binary name)
         if args.onetep_root is not None and args.binary_name is not None:
@@ -181,6 +221,16 @@ class OnetepCLI:
                 "Provided only one of --onetep-root/--binary-name; ignoring both. "
                 "Specify both to override SLURM executable paths."
             )
+
+        # Slurm Parameters
+        if args.system is not None: slurm = replace(slurm, system=args.system)
+        if args.partition is not None: slurm = replace(slurm, partition=args.partition)
+        if args.nodes is not None: slurm = replace(slurm, nodes=args.nodes)
+        if args.gpus is not None: slurm = replace(slurm, gpus=args.gpus)
+        if args.tasks_per_node is not None: slurm = replace(slurm, tasks_per_node=args.tasks_per_node)
+        if args.cpus_per_task is not None: slurm = replace(slurm, cpus_per_task=args.cpus_per_task)
+        if args.mem_per_cpu_mb is not None: slurm = replace(slurm, mem_per_cpu_mb=args.mem_per_cpu_mb)
+        if args.walltime is not None: slurm = replace(slurm, walltime=args.walltime)
 
         return OnetepParams(core=core, io=io, ngwfs=ng, edft=edft, solvent=solv, geom=geom, slurm=slurm, extra=params.extra)
 
@@ -199,8 +249,15 @@ class OnetepCLI:
         Read one or many Atoms from a file.
         Returns a list of (atoms, seed_suffix).
         """
-        if path.suffix.lower() == ".traj": atoms_list: list[Atoms] = read(path, index=":"); return [(a, f"{path.stem}-{i:03d}") for i, a in enumerate(atoms_list)]
-        else: a: Atoms = read(path); return [(a, path.stem)]
+        try: 
+            atoms_list = read(path, index=":")
+            if isinstance(atoms_list, Atoms): atoms_list = [atoms_list]
+        except Exception:
+            a = read(path)
+            atoms_list = [a]
+
+        if len(atoms_list) == 1:  return [(atoms_list[0], path.stem)]
+        else: return [(a, f"{path.stem}-{i:03d}") for i, a in enumerate(atoms_list)]
 
     # Static/utility parsers
     @staticmethod
