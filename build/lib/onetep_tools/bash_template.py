@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from string import Template
 
-from .data_structures import SlurmParams
+from .data_structures import SlurmParams, _UnsetType
 
 
 # GPU SBATCH logic
@@ -19,7 +19,7 @@ def gpu_sbatch_lines(slurm: SlurmParams) -> list[str]:
       - Isambard-AI: use --gpus=N
       - Archer2: use --gpus=N
     """
-    if slurm.gpus is None: return []
+    if slurm.gpus is _UnsetType: return []
     if slurm.system == "Sulis": return [f"#SBATCH --gres=gpu:lovelace_l40:{slurm.gpus}"]
     if slurm.system == "Isambard-AI": return [f"#SBATCH --gpus={slurm.gpus}"]
     if slurm.system == "Blythe": return [f"#SBATCH --gres=gpu:lovelace_l40:{slurm.gpus}"]
@@ -165,7 +165,7 @@ export OMP_NUM_THREADS=$$SLURM_CPUS_PER_TASK
 export SRUN_CPUS_PER_TASK=$$SLURM_CPUS_PER_TASK
 
 # Set up the job environment
-module purge; module load GCC/10.2.0 OpenMPI/4.0.5 OpenBLAS FFTW ScaLAPACK
+module purge; module load GCC/13.3.0 OpenMPI/5.0.3 OpenBLAS/0.3.27 FFTW/3.3.10 ScaLAPACK/2.2.0-fb
 
 # Set ONETEP executable and launcher
 ONETEP_EXEC="$onetep_binary_path"
