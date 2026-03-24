@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from string import Template
 
-from .data_structures import SlurmParams, _UnsetType
+from .data_structures import SlurmParams, UNSET
 
 
 # GPU SBATCH logic
@@ -19,7 +19,7 @@ def gpu_sbatch_lines(slurm: SlurmParams) -> list[str]:
       - Isambard-AI: use --gpus=N
       - Archer2: use --gpus=N
     """
-    if slurm.gpus is _UnsetType: return []
+    if slurm.gpus is UNSET: return []
     if slurm.system == "Sulis": return [f"#SBATCH --gres=gpu:lovelace_l40:{slurm.gpus}"]
     if slurm.system == "Isambard-AI": return [f"#SBATCH --gpus={slurm.gpus}"]
     if slurm.system == "Blythe": return [f"#SBATCH --gres=gpu:lovelace_l40:{slurm.gpus}"]
