@@ -284,6 +284,11 @@ srun --cpu-bind=verbose,cores --distribution=block:block -c$$OMP_NUM_THREADS -N 
 ##########################################################################################################################################################################
 """)
 
+RUN_SRUN_SULIS = Template(r"""##########################################################################################################################################################################
+srun -c$$OMP_NUM_THREADS -N $$SLURM_JOB_NUM_NODES -n $$SLURM_NTASKS $$ONETEP_LAUNCHER -c 0 -e $$ONETEP_EXEC $$SEED_DAT > $$SEED_OUT 2> $$SEED_ERR
+##########################################################################################################################################################################
+""")
+
 RUN_SRUN_GENERIC = Template(r"""##########################################################################################################################################################################
 srun -c$$OMP_NUM_THREADS -N $$SLURM_JOB_NUM_NODES -n $$SLURM_NTASKS $$ONETEP_LAUNCHER -e $$ONETEP_EXEC $$SEED_DAT > $$SEED_OUT 2> $$SEED_ERR
 ##########################################################################################################################################################################
@@ -468,7 +473,7 @@ def write_sbatch(workdir: Path, seed: str, slurm: SlurmParams) -> None:
         comment_block = COMMENTS_SULIS
         sbatch_block = SBATCH_SULIS.substitute(ctx)
         modules_block = MODULES_SULIS.substitute(ctx)
-        run_block = RUN_SRUN_GENERIC.substitute(ctx)
+        run_block = RUN_SRUN_SULIS.substitute(ctx)
 
     elif system == "Archer2":
         comment_block = COMMENTS_ARCHER2
