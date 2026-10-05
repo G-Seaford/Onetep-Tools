@@ -14,16 +14,15 @@ def gpu_sbatch_lines(slurm: SlurmParams) -> list[str]:
     Empty list means CPU-only job.
 
     Policy:
-      - Sulis: use --gres=gpu:lovelace_l40:N
+      - Sulis: use --gres=gpu:ampere_a100:N
       - Blythe: use --gres=gpu:lovelace_l40:N
       - Isambard-AI: use --gpus=N
       - Archer2: use --gpus=N
     """
     if slurm.gpus is UNSET: return []
-    if slurm.system == "Sulis": return [f"#SBATCH --gres=gpu:lovelace_l40:{slurm.gpus}"]
+    if slurm.system == "Sulis": return [f"#SBATCH --gres=gpu:ampere_a100:{slurm.gpus}"]
     if slurm.system == "Isambard-AI": return [f"#SBATCH --gpus={slurm.gpus}"]
     if slurm.system == "Blythe": return [f"#SBATCH --gres=gpu:lovelace_l40:{slurm.gpus}"]
-    if slurm.system == "Archer2": return [f"#SBATCH --gpus={slurm.gpus}"]
     return []
 
 
@@ -117,6 +116,7 @@ SBATCH_ARCHER2 = Template(r"""# ================================================
 #SBATCH --partition=$partition
 $gpu_block
 #SBATCH --nodes=$nodes
+#SBATCH --ntasks=$ntasks
 #SBATCH --ntasks-per-node=$tasks_per_node
 #SBATCH --cpus-per-task=$cpus_per_task
 #SBATCH --time=$walltime
@@ -176,10 +176,16 @@ MODULES_ARCHER2 = Template(r"""# Ensure the cpus-per-task option is propagated t
 export OMP_NUM_THREADS=$$SLURM_CPUS_PER_TASK
 export SRUN_CPUS_PER_TASK=$$SLURM_CPUS_PER_TASK
 
-# Set up the job environment (edit to match ARCHER2 environment/module policy)
+# Critical for threaded performance on ARCHER2 with gfortran
+export OMP_PLACES=cores
+export OMP_PROC_BIND=close
+
+# Works around a memory leak in libfabric
+export FI_MR_CACHE_MAX_COUNT=0
+
+# Set up the job environment
 module purge
-# module load PrgEnv-gnu ...
-# module load cray-fftw ...
+module load PrgEnv-gnu gcc/11.2.0 cray-mpich/8.1.27 load-epcc-module epcc-setup-env mkl
 
 # Set ONETEP executable and launcher
 ONETEP_EXEC="$onetep_binary_path"
@@ -343,6 +349,10 @@ mpirun --map-by ppr:$$tasks_per_node:node:PE=$$omp_threads_per_mpi_rank $$ONETEP
 ########################################################################################################################################################
 """)
 
+RUN_SRUN_ARCHER2 = Template(r"""##########################################################################################################################################################################
+srun --hint=nomultithread --distribution=block:block -c$$OMP_NUM_THREADS -N $$SLURM_JOB_NUM_NODES -n $$SLURM_NTASKS $$ONETEP_LAUNCHER -e $$ONETEP_EXEC $$SEED_DAT > $$SEED_OUT 2> $$SEED_ERR
+##########################################################################################################################################################################
+""")
 
 # Machine-specific tiny fragments=
 MACHINE_FRAGMENTS = {
@@ -444,6 +454,7 @@ def write_sbatch(workdir: Path, seed: str, slurm: SlurmParams) -> None:
     ctx = {
         "partition": slurm.partition,
         "nodes": str(slurm.nodes),
+        "ntasks": str(slurm.nodes * slurm.tasks_per_node),
         "tasks_per_node": str(slurm.tasks_per_node),
         "cpus_per_task": str(slurm.cpus_per_task),
         "walltime": slurm.walltime,
@@ -479,7 +490,7 @@ def write_sbatch(workdir: Path, seed: str, slurm: SlurmParams) -> None:
         comment_block = COMMENTS_ARCHER2
         sbatch_block = SBATCH_ARCHER2.substitute(ctx)
         modules_block = MODULES_ARCHER2.substitute(ctx)
-        run_block = RUN_SRUN_GENERIC.substitute(ctx)
+        run_block = RUN_SRUN_ARCHER2.substitute(ctx)
 
     elif system == "Isambard-AI":
         comment_block = COMMENTS_ISAMBARDAI
