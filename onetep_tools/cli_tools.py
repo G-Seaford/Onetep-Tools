@@ -148,7 +148,7 @@ class OnetepCLI:
         # Core
         if args.task is not None: core = replace(core, task=args.task)
         if args.xc is not None: core = replace(core, xc_functional=args.xc)
-        if args.cutoff is not None: core = replace(core, cutoff_energy=args.cutoff)
+        if args.cutoff is not None: core = replace(core, cutoff_energy=(args.cutoff, "eV"))
         if args.kgrid is not None: core = replace(core, kpoint_grid=args.kgrid)
         if args.kpar_groups is not None: core = replace(core, kpar_groups=args.kpar_groups)
         if args.temperature is not None: core = replace(core, temperature_k=args.temperature)
@@ -185,7 +185,7 @@ class OnetepCLI:
         # eDFT / GC eDFT
         if args.enable_edft is not None: edft = replace(edft, enable_edft=bool(args.enable_edft))
         if args.enable_gc_edft is not None: edft = replace(edft, enable_gc_edft=bool(args.enable_gc_edft))
-        if args.edft_ref_electrode_potential is not None: edft = replace(edft, gc=replace(edft.gc, reference_potential_ev=args.edft_ref_electrode_potential))
+        if args.edft_ref_electrode_potential is not None: edft = replace(edft, gc=replace(edft.gc, reference_potential=(args.edft_ref_electrode_potential, "eV")))
         if args.gc_applied_biases is not None: edft = replace(edft, gc=replace(edft.gc, electrode_potentials_v=list(args.gc_applied_biases)))
         if args.spin is not None: edft = replace(edft, spin=args.spin)
         if args.spin_fix is not None: edft = replace(edft, spin_fix=args.spin_fix)

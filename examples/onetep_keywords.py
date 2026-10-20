@@ -10,7 +10,7 @@ DEFAULT_PARAMETERS = {
         "pseudopotentials": {"C": "C.PBE-paw.abinit", "Au": "Au.PBE-paw.abinit"},
 
         "output_path": "Calculations/",
-        "cutoff_energy_ev": 750,
+        "cutoff_energy": (750, "eV"),
         "kpoint_grid": (3, 3, 1),
         "kpar_groups": 1,
         "temperature_k": 298.15,
@@ -51,7 +51,7 @@ DEFAULT_PARAMETERS = {
         "spin_polarised": False,
         
         "gc": {
-            "reference_potential_ev": -2.70,
+            "reference_potential": (-2.70, "eV"),
             "electrode_potentials_v": [0.00,],
         },
     },
@@ -64,8 +64,8 @@ DEFAULT_PARAMETERS = {
         "pspot_bcs": "P P P",
         "ion_ion_bcs": "P P P",
         "solvent_permittivity": 78.4,
-        "solvent_surf_tension_nm": "0.072 N/m",
-        "smeared_ion_width_bohr": 0.8,
+        "solvent_surf_tension": "0.072 N/m",
+        "smeared_ion_width": 0.8,
         "solvent_radius_bohr": {"C": 3.20,
                                 "Au": 3.14},
         "use_apolar_solvation": True,
@@ -96,7 +96,7 @@ DEFAULT_PARAMETERS = {
             "vcyc_smoothing": 6,
             "vcycle_max_iters": 500,
             "newton_max_iters": 500,
-            "steric_smearing_bohr": 0.4,
+            "steric_smearing": (0.4, "Bohr"),
             "steric_dens_isovalue": 1e-3,
         },
     },

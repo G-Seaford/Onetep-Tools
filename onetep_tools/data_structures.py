@@ -71,11 +71,13 @@ ONETEP_UNITS: dict[str, frozenset[str]] = {
 # A physical value: bare number, (value, unit) or "value unit", e.g. 800, (30, "Ha"), "30 Ha"
 Quantity = float | tuple[float, str] | str
 
-def _with_unit(v: Any, dim: str, default_unit: str | None = None) -> Any:
+def _with_unit(v: Any, dim: str, fixed_unit: str | None = None) -> Any:
     """
-    Format a physical keyword value. A bare number gets `default_unit` (or no
-    unit, so ONETEP's own default applies). An explicit unit, given as
-    (value, unit) or "value unit", must be one ONETEP accepts for `dim`.
+    Format a physical keyword value. A bare number is written without a unit,
+    so ONETEP applies its own default unit for that keyword (usually atomic
+    units). An explicit unit, given as (value, unit) or "value unit", must be
+    one ONETEP accepts for `dim`. `fixed_unit` is only for keywords whose unit
+    is part of their meaning, and is then given to bare numbers.
     """
     if not is_set(v): return UNSET
     if isinstance(v, str):
@@ -91,7 +93,7 @@ def _with_unit(v: Any, dim: str, default_unit: str | None = None) -> Any:
             raise ValueError(f"Unit {unit!r} is not a valid ONETEP {dim} unit; "
                              f"allowed (case-insensitive): {', '.join(sorted(ONETEP_UNITS[dim]))}")
         return f"{value} {unit}"
-    return f"{v} {default_unit}" if default_unit else v
+    return f"{v} {fixed_unit}" if fixed_unit else v
 
 def _vec(v: Any) -> Any:
     return " ".join(map(str, v)) if is_set(v) else UNSET
@@ -255,8 +257,8 @@ class CoreParams(ParamsTemplate):
     seed: str | _UnsetType = UNSET
 
     # System parameters
-    cutoff_energy: Quantity | _UnsetType = UNSET  # bare number: eV
-    kernel_cutoff: Quantity | _UnsetType = UNSET  # bare number: bohr
+    cutoff_energy: Quantity | _UnsetType = UNSET  # bare number: ONETEP default (Ha)
+    kernel_cutoff: Quantity | _UnsetType = UNSET  # bare number: ONETEP default (bohr)
     kpoint_grid: tuple[int, int, int] | _UnsetType = UNSET
     kpar_groups: int | _UnsetType = UNSET
     temperature_k: float | _UnsetType = UNSET
@@ -292,8 +294,8 @@ class CoreParams(ParamsTemplate):
     def _core_keywords(self, ctx: ParamsTemplate.Context) -> dict[str, Any]:
         return {
             "task": self.task,
-            "cutoff_energy": _with_unit(self.cutoff_energy, "energy", "eV"),
-            "kernel_cutoff": _with_unit(self.kernel_cutoff, "length", "bohr"),
+            "cutoff_energy": _with_unit(self.cutoff_energy, "energy"),
+            "kernel_cutoff": _with_unit(self.kernel_cutoff, "length"),
             "xc_functional": self.xc_functional,
             "paw": self.use_paw,
             "paw_core_den_taper_gvec_frac": self.paw_core_den_taper_gvec_frac,
@@ -334,8 +336,8 @@ class NGWFParams(ParamsTemplate):
 @dataclass
 class GCeDFTParams(ParamsTemplate):
     
-    reference_potential_ev: Quantity | _UnsetType = UNSET  # bare number: eV
-    electrode_potentials_v: list[float] | _UnsetType = UNSET
+    reference_potential: Quantity | _UnsetType = UNSET  # bare number: ONETEP default (Ha)
+    electrode_potentials_v: list[float] | _UnsetType = UNSET  # always V: these also name the bias directories
 
     @property
     def electrode_potentials(self) -> list[float]:
@@ -344,7 +346,7 @@ class GCeDFTParams(ParamsTemplate):
 
     def _core_keywords(self, ctx: ParamsTemplate.Context) -> dict[str, Any]:
         return {
-            "edft_reference_potential": _with_unit(self.reference_potential_ev, "energy", "eV"),
+            "edft_reference_potential": _with_unit(self.reference_potential, "energy"),
             "edft_electrode_potential": _with_unit(ctx.applied_potential_v, "potential", "V") if is_set(self.electrode_potentials_v) else UNSET,
         }
         
@@ -359,7 +361,7 @@ class eDFTParams(ParamsTemplate):
     edft_nelec_thres: float | _UnsetType = UNSET
     edft_fermi_thres: float | _UnsetType = UNSET
     edft_commutator_thres: float | _UnsetType = UNSET
-    edft_smearing_width: Quantity | _UnsetType = UNSET  # bare number: eV
+    edft_smearing_width: Quantity | _UnsetType = UNSET  # bare number: ONETEP default (Ha)
 
     spin_fix: int | _UnsetType = UNSET
     spin: int | _UnsetType = UNSET
@@ -372,7 +374,7 @@ class eDFTParams(ParamsTemplate):
             "edft": True,  # present iff enabled
             "edft_grand_canonical": self.enable_gc_edft,
             "edft_maxit": self.edft_max_it,
-            "edft_smearing_width": _with_unit(self.edft_smearing_width, "energy", "eV"),
+            "edft_smearing_width": _with_unit(self.edft_smearing_width, "energy"),
             "edft_nelec_thres": self.edft_nelec_thres,
             "edft_fermi_thres": self.edft_fermi_thres,
             "edft_commutator_thres": self.edft_commutator_thres,
@@ -418,7 +420,7 @@ class DLMGParams(ParamsTemplate):
     vcyc_smoothing: int | _UnsetType = UNSET
     vcycle_max_iters: int | _UnsetType = UNSET
     newton_max_iters: int | _UnsetType = UNSET
-    steric_smearing_bohr: Quantity | _UnsetType = UNSET  # bare number: bohr
+    steric_smearing: Quantity | _UnsetType = UNSET  # bare number: ONETEP default (bohr)
     steric_dens_isovalue: float | _UnsetType = UNSET
 
     def _core_keywords(self, ctx: ParamsTemplate.Context) -> dict[str, Any]:
@@ -433,7 +435,7 @@ class DLMGParams(ParamsTemplate):
             "mg_max_iters_newton": self.newton_max_iters,
             "mg_vcyc_smoother_iter_pre": v,
             "mg_vcyc_smoother_iter_post": v,
-            "is_hc_steric_smearing": _with_unit(self.steric_smearing_bohr, "length", "Bohr"),
+            "is_hc_steric_smearing": _with_unit(self.steric_smearing, "length"),
             "is_hc_steric_dens_isovalue": self.steric_dens_isovalue,
         }
 
@@ -450,8 +452,8 @@ class SolventParams(ParamsTemplate):
     ion_ion_bcs: str | _UnsetType = UNSET
 
     solvent_permittivity: float | _UnsetType = UNSET
-    solvent_surf_tension_nm: Quantity | _UnsetType = UNSET  # bare number: ONETEP default (Ha/bohr**2)
-    smeared_ion_width_bohr: Quantity | _UnsetType = UNSET   # bare number: ONETEP default (bohr)
+    solvent_surf_tension: Quantity | _UnsetType = UNSET  # bare number: ONETEP default (Ha/bohr**2)
+    smeared_ion_width: Quantity | _UnsetType = UNSET     # bare number: ONETEP default (bohr)
 
     solvent_radius_bohr: dict[str, float] | _UnsetType = UNSET
 
@@ -478,10 +480,10 @@ class SolventParams(ParamsTemplate):
             "is_dielectric_function": self.dielectric_function,
             "is_steric_pot_type": self.steric_potential_type,
             "is_bulk_permittivity": self.solvent_permittivity,
-            "is_solvent_surf_tension": _with_unit(self.solvent_surf_tension_nm, "surface_tension"),
+            "is_solvent_surf_tension": _with_unit(self.solvent_surf_tension, "surface_tension"),
             "is_solvation_properties": self.use_solvation_properties,
             "is_steric_write": self.write_steric,
-            "is_smeared_ion_width": _with_unit(self.smeared_ion_width_bohr, "length"),
+            "is_smeared_ion_width": _with_unit(self.smeared_ion_width, "length"),
             "is_pbe_energy_tolerance" : "1E+50 Ha",
         }
 
