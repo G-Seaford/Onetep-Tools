@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from string import Template
 
-from .data_structures import SlurmParams, UNSET
+from .data_structures import SlurmParams, UNSET, is_set
 
 
 # GPU SBATCH logic
@@ -497,7 +497,7 @@ def write_sbatch(workdir: Path, seed: str, slurm: SlurmParams) -> None:
         sbatch_block = SBATCH_ISAMBARDAI.substitute(ctx)
         modules_block = MODULES_ISAMBARDAI.substitute(ctx)
 
-        if slurm.gpus is None:
+        if not is_set(slurm.gpus):
             run_block = RUN_MPIRUN_ISAMBARDAI_CPU.substitute(ctx)
         else:
             ctx["gpus"] = str(slurm.gpus)

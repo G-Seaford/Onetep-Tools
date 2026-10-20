@@ -9,7 +9,7 @@ from pathlib import Path
 from ase import Atoms
 from ase.io import read
 
-from .data_structures import OnetepParams, GCeDFTParams
+from .data_structures import OnetepParams
 class OnetepCLI:
     """
     Encapsulates command-line parsing and application of CLI overrides
@@ -185,7 +185,6 @@ class OnetepCLI:
         # eDFT / GC eDFT
         if args.enable_edft is not None: edft = replace(edft, enable_edft=bool(args.enable_edft))
         if args.enable_gc_edft is not None: edft = replace(edft, enable_gc_edft=bool(args.enable_gc_edft))
-        if edft.gc is None: edft = replace(edft, gc=GCeDFTParams())
         if args.edft_ref_electrode_potential is not None: edft = replace(edft, gc=replace(edft.gc, reference_potential_ev=args.edft_ref_electrode_potential))
         if args.gc_applied_biases is not None: edft = replace(edft, gc=replace(edft.gc, electrode_potentials_v=list(args.gc_applied_biases)))
         if args.spin is not None: edft = replace(edft, spin=args.spin)

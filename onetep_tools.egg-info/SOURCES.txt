@@ -1,6 +1,8 @@
 LICENSE
 README.md
 pyproject.toml
+examples/generate_onetep_inputs.py
+examples/onetep_keywords.py
 onetep_tools/__init__.py
 onetep_tools/bash_template.py
 onetep_tools/cli_tools.py

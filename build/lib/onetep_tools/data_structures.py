@@ -177,6 +177,7 @@ class CoreParams(ParamsTemplate):
     xc_functional: str | _UnsetType = UNSET
     kpoint_method: str | _UnsetType = UNSET
     use_paw: bool = True
+    paw_core_den_taper_gvec_frac: float | _UnsetType = UNSET  # PAW pseudo-core taper start as fraction of max G (<0: off)
     write_forces: bool = True
     write_properties: bool = False
 
@@ -221,6 +222,7 @@ class CoreParams(ParamsTemplate):
             "kernel_cutoff": f"{self.kernel_cutoff} bohr" if self.kernel_cutoff is not UNSET else None,
             "xc_functional": self.xc_functional,
             "paw": self.use_paw,
+            "paw_core_den_taper_gvec_frac": self.paw_core_den_taper_gvec_frac,
             "write_forces": self.write_forces,
             'do_properties' : self.write_properties,
             "kpoint_method": self.kpoint_method,

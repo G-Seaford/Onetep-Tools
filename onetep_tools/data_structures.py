@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from collections import ChainMap
@@ -16,20 +17,84 @@ KeywordDict = dict[str, KeywordValue]
 System = Literal["Blythe", "Sulis", "Archer2", "Isambard-AI", "default"]
 
 # Sentinel for unset values
-class _UnsetType: pass
+class _UnsetType:
+    """Marks a parameter as not set: its keyword is omitted from the .dat."""
+    _instance: _UnsetType | None = None
+
+    def __new__(cls):
+        if cls._instance is None: cls._instance = super().__new__(cls)
+        return cls._instance
+
+    # Singleton survives copy/deepcopy/pickle, so `is UNSET` always holds
+    def __repr__(self) -> str: return "UNSET"
+    def __bool__(self) -> bool: return False
+    def __copy__(self): return self
+    def __deepcopy__(self, memo): return self
+    def __reduce__(self): return (_UnsetType, ())
+
 UNSET = _UnsetType()
+
+def is_set(v: Any) -> bool:
+    return v is not UNSET
+
+def or_unset(v: Any) -> Any:
+    """Normalise None (argparse, call sites) to UNSET at the boundary."""
+    return UNSET if v is None else v
 
 # Helpers
 def _strip_unset(d: dict[str, Any]) -> KeywordDict:
-    return {k: v for k, v in d.items() if (v is not None and v is not UNSET)}
+    leftover = [k for k, v in d.items() if v is None]
+    if leftover: raise ValueError(f"Keywords set to None (use UNSET): {leftover}")
+    return {k: v for k, v in d.items() if is_set(v)}
 
 def _merge_keywords(*dicts: dict[str, Any]) -> KeywordDict:
     dicts = [d for d in dicts if d]
     merged = dict(ChainMap(*reversed(list(dicts))))
     return _strip_unset(merged)
 
-def _opt(v: float | _UnsetType | None, unit: str) -> str | None:
-    return None if (v is None or v is UNSET) else f"{v} {unit}"
+# Physical units accepted by ONETEP's input parser, by dimension (phy table in
+# src/esdf_mod.F90). ONETEP matches unit names case-insensitively.
+ONETEP_UNITS: dict[str, frozenset[str]] = {
+    "energy":          frozenset({"ha", "hartree", "mha", "mhartree", "ev", "mev", "ry", "mry", "j", "erg",
+                                  "kcal/mol", "kj/mol", "hz", "thz", "cm-1", "cm^-1", "cm**-1", "k"}),
+    "length":          frozenset({"bohr", "ang", "nm", "cm", "m"}),
+    "inverse_length":  frozenset({"1/bohr", "bohr-1", "bohr^-1", "bohr**-1", "1/ang", "ang-1", "ang^-1",
+                                  "ang**-1", "1/nm", "nm-1", "nm^-1", "nm**-1"}),
+    "force":           frozenset({"ha/bohr", "ry/bohr", "ev/ang", "n"}),
+    "pressure":        frozenset({"ha/bohr**3", "ry/bohr**3", "ev/ang**3", "pa", "mpa", "gpa", "atm", "bar", "mbar"}),
+    "surface_tension": frozenset({"ha/bohr**2", "j/m**2", "n/m"}),
+    "potential":       frozenset({"v", "ha/e"}),
+    "efield":          frozenset({"ha/bohr/e", "ry/bohr/e", "v/bohr", "v/ang", "v/nm", "v/m"}),
+    "time":            frozenset({"aut", "fs", "ps", "ns", "s"}),
+}
+
+# A physical value: bare number, (value, unit) or "value unit", e.g. 800, (30, "Ha"), "30 Ha"
+Quantity = float | tuple[float, str] | str
+
+def _with_unit(v: Any, dim: str, default_unit: str | None = None) -> Any:
+    """
+    Format a physical keyword value. A bare number gets `default_unit` (or no
+    unit, so ONETEP's own default applies). An explicit unit, given as
+    (value, unit) or "value unit", must be one ONETEP accepts for `dim`.
+    """
+    if not is_set(v): return UNSET
+    if isinstance(v, str):
+        parts = v.split()
+        if len(parts) == 1: v = parts[0]
+        elif len(parts) == 2: v = tuple(parts)
+        else: raise ValueError(f"Cannot parse physical value {v!r}; expected 'value unit'")
+    if isinstance(v, (tuple, list)):
+        if len(v) != 2: raise ValueError(f"Physical value {v!r} must be (value, unit)")
+        value, unit = v
+        float(value)  # raises if the value is not numeric
+        if unit.lower() not in ONETEP_UNITS[dim]:
+            raise ValueError(f"Unit {unit!r} is not a valid ONETEP {dim} unit; "
+                             f"allowed (case-insensitive): {', '.join(sorted(ONETEP_UNITS[dim]))}")
+        return f"{value} {unit}"
+    return f"{v} {default_unit}" if default_unit else v
+
+def _vec(v: Any) -> Any:
+    return " ".join(map(str, v)) if is_set(v) else UNSET
 
 # Base class
 @dataclass
@@ -177,6 +242,7 @@ class CoreParams(ParamsTemplate):
     xc_functional: str | _UnsetType = UNSET
     kpoint_method: str | _UnsetType = UNSET
     use_paw: bool = True
+    paw_core_den_taper_gvec_frac: float | _UnsetType = UNSET
     write_forces: bool = True
     write_properties: bool = False
 
@@ -186,11 +252,11 @@ class CoreParams(ParamsTemplate):
 
     input_path: Path = Path(".")
     output_path: Path =Path(".")
-    seed: str | None = None
+    seed: str | _UnsetType = UNSET
 
     # System parameters
-    cutoff_energy: int | _UnsetType = UNSET
-    kernel_cutoff: int | _UnsetType = UNSET
+    cutoff_energy: Quantity | _UnsetType = UNSET  # bare number: eV
+    kernel_cutoff: Quantity | _UnsetType = UNSET  # bare number: bohr
     kpoint_grid: tuple[int, int, int] | _UnsetType = UNSET
     kpar_groups: int | _UnsetType = UNSET
     temperature_k: float | _UnsetType = UNSET
@@ -213,18 +279,28 @@ class CoreParams(ParamsTemplate):
     # Geometry constraints
     geom_constraints: GeomConstraints = field(default_factory=GeomConstraints)
 
+    def _paw_core_taper(self) -> float | _UnsetType:
+        """PAW pseudo-core taper, passed only when fine_grid_scale > 2.0 (ONETEP default 2.0)."""
+        if not is_set(self.paw_core_den_taper_gvec_frac): return UNSET
+        scale = self.fine_grid_scale if is_set(self.fine_grid_scale) else 2.0
+        if scale <= 2.0:
+            logging.warning("Ignoring paw_core_den_taper_gvec_frac=%s: requires fine_grid_scale > 2.0 (got %s).",
+                            self.paw_core_den_taper_gvec_frac, scale)
+            return UNSET
+        return self.paw_core_den_taper_gvec_frac
+
     def _core_keywords(self, ctx: ParamsTemplate.Context) -> dict[str, Any]:
-        g = self.kpoint_grid if self.kpoint_grid is not UNSET else None
         return {
             "task": self.task,
-            "cutoff_energy": f"{self.cutoff_energy} eV" if self.cutoff_energy is not UNSET else None,
-            "kernel_cutoff": f"{self.kernel_cutoff} bohr" if self.kernel_cutoff is not UNSET else None,
+            "cutoff_energy": _with_unit(self.cutoff_energy, "energy", "eV"),
+            "kernel_cutoff": _with_unit(self.kernel_cutoff, "length", "bohr"),
             "xc_functional": self.xc_functional,
             "paw": self.use_paw,
+            "paw_core_den_taper_gvec_frac": self.paw_core_den_taper_gvec_frac,
             "write_forces": self.write_forces,
             'do_properties' : self.write_properties,
             "kpoint_method": self.kpoint_method,
-            "kpoint_grid_size": (f"{g[0]} {g[1]} {g[2]}" if self.kpoint_grid is not UNSET else None),
+            "kpoint_grid_size": _vec(self.kpoint_grid),
             "num_kpars": self.kpar_groups,
             "use_symmetry": self.use_symmetry,
             "use_time_reversal": self.use_time_reversal,
@@ -249,12 +325,8 @@ class NGWFParams(ParamsTemplate):
     ngwf_threshold_orig: float | _UnsetType = UNSET
 
     def _core_keywords(self, ctx: ParamsTemplate.Context) -> dict[str, Any]:
-        extend = None
-        if self.extend_ngwfs is not UNSET:
-            e = self.extend_ngwfs
-            extend = f"{e[0]} {e[1]} {e[2]}"
         return {
-            "extend_ngwf": extend,
+            "extend_ngwf": _vec(self.extend_ngwfs),
             "maxit_ngwf_cg": self.maxit_ngwf_cg,
             "ngwf_threshold_orig": self.ngwf_threshold_orig,
         }
@@ -262,18 +334,18 @@ class NGWFParams(ParamsTemplate):
 @dataclass
 class GCeDFTParams(ParamsTemplate):
     
-    reference_potential_ev: float | _UnsetType = UNSET
+    reference_potential_ev: Quantity | _UnsetType = UNSET  # bare number: eV
     electrode_potentials_v: list[float] | _UnsetType = UNSET
 
     @property
     def electrode_potentials(self) -> list[float]:
         """Read-only-ish view (copy) of the sweep as a list."""
-        return list(self.electrode_potentials_v) if self.electrode_potentials_v is not UNSET else []
+        return list(self.electrode_potentials_v) if is_set(self.electrode_potentials_v) else []
 
     def _core_keywords(self, ctx: ParamsTemplate.Context) -> dict[str, Any]:
         return {
-            "edft_reference_potential": f"{self.reference_potential_ev} eV" if self.reference_potential_ev is not UNSET else None,
-            "edft_electrode_potential": _opt(ctx.applied_potential_v, "V") if self.electrode_potentials_v is not UNSET else None,
+            "edft_reference_potential": _with_unit(self.reference_potential_ev, "energy", "eV"),
+            "edft_electrode_potential": _with_unit(ctx.applied_potential_v, "potential", "V") if is_set(self.electrode_potentials_v) else UNSET,
         }
         
 @dataclass
@@ -287,7 +359,7 @@ class eDFTParams(ParamsTemplate):
     edft_nelec_thres: float | _UnsetType = UNSET
     edft_fermi_thres: float | _UnsetType = UNSET
     edft_commutator_thres: float | _UnsetType = UNSET
-    edft_smearing_width: float | _UnsetType = UNSET
+    edft_smearing_width: Quantity | _UnsetType = UNSET  # bare number: eV
 
     spin_fix: int | _UnsetType = UNSET
     spin: int | _UnsetType = UNSET
@@ -300,7 +372,7 @@ class eDFTParams(ParamsTemplate):
             "edft": True,  # present iff enabled
             "edft_grand_canonical": self.enable_gc_edft,
             "edft_maxit": self.edft_max_it,
-            "edft_smearing_width": _opt(self.edft_smearing_width, "eV") if self.edft_smearing_width is not UNSET else None,
+            "edft_smearing_width": _with_unit(self.edft_smearing_width, "energy", "eV"),
             "edft_nelec_thres": self.edft_nelec_thres,
             "edft_fermi_thres": self.edft_fermi_thres,
             "edft_commutator_thres": self.edft_commutator_thres,
@@ -308,9 +380,7 @@ class eDFTParams(ParamsTemplate):
             "spin_polarized": self.spin_polarised,
             "spin": self.spin,
         }
-        gc_kw: dict[str, Any] = {}
-        if self.enable_gc_edft and self.gc is not UNSET:
-            gc_kw = self.gc.to_keywords(ParamsTemplate.Context(applied_potential_v=ctx.applied_potential_v))
+        gc_kw = self.gc.to_keywords(ParamsTemplate.Context(applied_potential_v=ctx.applied_potential_v)) if self.enable_gc_edft else {}
         return _merge_keywords(base, gc_kw)
 
 @dataclass
@@ -326,13 +396,14 @@ class PBElectrolyteParams(ParamsTemplate):
     implicit_ions: list[dict[str, str | int | float]] | _UnsetType = UNSET
 
     def _core_keywords(self, ctx: ParamsTemplate.Context) -> dict[str, Any]:
-        ions = [f"{ion['symbol']} {ion['charge']} {ion['conc']}" for ion in self.implicit_ions] if self.implicit_ions is not UNSET else None
+        ions = [f"{ion['symbol']} {ion['charge']} {ion['conc']}" for ion in self.implicit_ions] if is_set(self.implicit_ions) else UNSET
         return {
             "sol_ions": ions,
             "is_pbe": self.pbe_mode,
             "is_pbe_neutralisation_scheme": self.neutralisation_scheme,
             "is_pbe_bc_debye_screening": self.debye_screening,
-            "is_pbe_temperature": _opt(ctx.temperature_k, "K") if ctx.temperature_k is not UNSET else None,
+            # Plain number in ONETEP (always kelvin, not a physical keyword), so no unit choice
+            "is_pbe_temperature": f"{ctx.temperature_k} K" if is_set(ctx.temperature_k) else UNSET,
             "is_bc_coarseness": self.bcs_coarseness,
             "is_bc_threshold": self.bcs_threshold,
         }
@@ -347,7 +418,7 @@ class DLMGParams(ParamsTemplate):
     vcyc_smoothing: int | _UnsetType = UNSET
     vcycle_max_iters: int | _UnsetType = UNSET
     newton_max_iters: int | _UnsetType = UNSET
-    steric_smearing_bohr: float | _UnsetType = UNSET
+    steric_smearing_bohr: Quantity | _UnsetType = UNSET  # bare number: bohr
     steric_dens_isovalue: float | _UnsetType = UNSET
 
     def _core_keywords(self, ctx: ParamsTemplate.Context) -> dict[str, Any]:
@@ -362,7 +433,7 @@ class DLMGParams(ParamsTemplate):
             "mg_max_iters_newton": self.newton_max_iters,
             "mg_vcyc_smoother_iter_pre": v,
             "mg_vcyc_smoother_iter_post": v,
-            "is_hc_steric_smearing": f"{self.steric_smearing_bohr} Bohr" if self.steric_smearing_bohr is not UNSET else None,
+            "is_hc_steric_smearing": _with_unit(self.steric_smearing_bohr, "length", "Bohr"),
             "is_hc_steric_dens_isovalue": self.steric_dens_isovalue,
         }
 
@@ -379,8 +450,8 @@ class SolventParams(ParamsTemplate):
     ion_ion_bcs: str | _UnsetType = UNSET
 
     solvent_permittivity: float | _UnsetType = UNSET
-    solvent_surf_tension_nm: str | _UnsetType = UNSET
-    smeared_ion_width_bohr: float | _UnsetType = UNSET
+    solvent_surf_tension_nm: Quantity | _UnsetType = UNSET  # bare number: ONETEP default (Ha/bohr**2)
+    smeared_ion_width_bohr: Quantity | _UnsetType = UNSET   # bare number: ONETEP default (bohr)
 
     solvent_radius_bohr: dict[str, float] | _UnsetType = UNSET
 
@@ -394,7 +465,7 @@ class SolventParams(ParamsTemplate):
     dlmg: DLMGParams = field(default_factory=DLMGParams)
 
     def _core_keywords(self, ctx: ParamsTemplate.Context) -> dict[str, Any]:
-        radii = [f"{sym} {r:.2f}" for sym, r in self.solvent_radius_bohr.items()] if self.solvent_radius_bohr is not UNSET else None
+        radii = [f"{sym} {r:.2f}" for sym, r in self.solvent_radius_bohr.items()] if is_set(self.solvent_radius_bohr) else UNSET
         return {
             "is_implicit_solvent": self.enable_implicit_solvent,
             "is_auto_solvation": self.use_auto_solvation,
@@ -407,10 +478,10 @@ class SolventParams(ParamsTemplate):
             "is_dielectric_function": self.dielectric_function,
             "is_steric_pot_type": self.steric_potential_type,
             "is_bulk_permittivity": self.solvent_permittivity,
-            "is_solvent_surf_tension": self.solvent_surf_tension_nm,
+            "is_solvent_surf_tension": _with_unit(self.solvent_surf_tension_nm, "surface_tension"),
             "is_solvation_properties": self.use_solvation_properties,
             "is_steric_write": self.write_steric,
-            "is_smeared_ion_width": self.smeared_ion_width_bohr,
+            "is_smeared_ion_width": _with_unit(self.smeared_ion_width_bohr, "length"),
             "is_pbe_energy_tolerance" : "1E+50 Ha",
         }
 
@@ -459,25 +530,19 @@ class OnetepParams:
         )
         return OnetepProfile(command=cmd, pseudo_path=self.core.pseudo_path)
     
-    def iter_applied_potentials(self) -> list[float | None]:
-        if (
-            self.edft.enable_edft
-            and self.edft.enable_gc_edft
-            and self.edft.gc is not UNSET
-            and self.edft.gc.electrode_potentials_v is not UNSET
-            and len(self.edft.gc.electrode_potentials_v) > 0
-        ):
-            return list(self.edft.gc.electrode_potentials_v)
-        return [None]
+    def iter_applied_potentials(self) -> list[float | _UnsetType]:
+        if self.edft.enable_edft and self.edft.enable_gc_edft and self.edft.gc.electrode_potentials:
+            return self.edft.gc.electrode_potentials
+        return [UNSET]
 
-    def build_keywords(self, applied_potential_v: float | None) -> KeywordDict:
+    def build_keywords(self, applied_potential_v: float | _UnsetType | None = UNSET) -> KeywordDict:
         """
         Compose the final ONETEP keyword dictionary.
         Each pack contributes only when its internal enable flags allow it.
         """
         ctx = ParamsTemplate.Context(
             temperature_k=self.core.temperature_k,
-            applied_potential_v=applied_potential_v,
+            applied_potential_v=or_unset(applied_potential_v),
         )
 
         parts: list[KeywordDict] = []
