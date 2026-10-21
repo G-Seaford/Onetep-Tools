@@ -36,7 +36,7 @@ HEADER = """#!/bin/bash
 #   Gianluca Seaford, Luca.Seaford@warwick.ac.uk
 #   University of Warwick
 #
-# This script is based off of the ONETEP submission script for ARCHER2 created by:
+# This script is based off of the ONETEP submission script created by:
 #
 #         Jacek Dziedzic, J.Dziedzic@soton.ac.uk
 #                         University of Southampton
@@ -50,7 +50,7 @@ HEADER = """#!/bin/bash
 """
 
 COMMENTS_BLYTHE = """ --------------------------------------------------------------------------------
-# Target machine: SCRTP Blythe (Warwick)
+# Target machine: Blythe (Warwick)
 # --------------------------------------------------------------------------------
 """
 
@@ -104,6 +104,7 @@ SBATCH_TASKFARM = Template(r"""# ===============================================
 #SBATCH --partition=$partition
 $gpu_block
 #SBATCH --nodes=$nodes
+#SBATCH --ntasks=$ntasks
 #SBATCH --ntasks-per-node=$tasks_per_node
 #SBATCH --cpus-per-task=$cpus_per_task
 #SBATCH --time=$walltime
@@ -290,9 +291,9 @@ echo "--- Executing ONETEP."
 """)
 
 CORE_LOWER = Template(r"""
+RESULT=$$?
 echo "--- Run finished at `date`."
 
-RESULT=$$?
 if [ $$RESULT -ne 0 ]; then
     echo "!!! Launcher reported a non-zero exit code: $$RESULT. Aborting!" >&2
     touch "%RUN_ERROR"

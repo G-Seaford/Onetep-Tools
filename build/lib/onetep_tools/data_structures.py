@@ -14,7 +14,7 @@ KeywordValue = str | int | float | bool | list[str]
 KeywordDict = dict[str, KeywordValue]
 
 # Allowed systems
-System = Literal["Blythe", "Sulis", "Archer2", "Isambard-AI", "default"]
+System = Literal["Blythe", "Taskfarm", "Sulis", "Archer2", "Isambard-AI", "default"]
 
 # Sentinel for unset values
 class _UnsetType:

@@ -54,6 +54,11 @@ COMMENTS_BLYTHE = """ ----------------------------------------------------------
 # --------------------------------------------------------------------------------
 """
 
+COMMENTS_TASKFARM = """# --------------------------------------------------------------------------------
+# Target machine: SCRTP Taskfarm (Warwick)
+# --------------------------------------------------------------------------------
+"""
+
 COMMENTS_SULIS = """# --------------------------------------------------------------------------------
 # Target machine: Sulis
 # --------------------------------------------------------------------------------
@@ -78,6 +83,23 @@ COMMENTS_ISAMBARDAI = """# -----------------------------------------------------
 
 # SBATCH blocks
 SBATCH_BLYTHE = Template(r"""# =================================================================================
+
+#SBATCH --partition=$partition
+$gpu_block
+#SBATCH --nodes=$nodes
+#SBATCH --ntasks-per-node=$tasks_per_node
+#SBATCH --cpus-per-task=$cpus_per_task
+#SBATCH --time=$walltime
+#SBATCH --mem-per-cpu=$mem_per_cpu_mb
+
+#SBATCH --job-name=$job_name
+#SBATCH --output=sbatch_files/$job_name-%j.out
+#SBATCH --error=sbatch_files/$job_name-%j.err
+
+# =================================================================================
+""")
+
+SBATCH_TASKFARM = Template(r"""# =================================================================================
 
 #SBATCH --partition=$partition
 $gpu_block
@@ -154,6 +176,18 @@ export SRUN_CPUS_PER_TASK=$$SLURM_CPUS_PER_TASK
 
 # Set up the job environment
 module purge; module load GCC/13.3.0 OpenMPI/4.1.6-GCC-13.2.0 OpenBLAS/0.3.24-GCC-13.2.0 FFTW/3.3.10-GCC-13.3.0 ScaLAPACK/2.2.0-gompi-2024a-fb
+
+# Set ONETEP executable and launcher
+ONETEP_EXEC="$onetep_binary_path"
+ONETEP_LAUNCHER="$onetep_launcher_path"
+""")
+
+MODULES_TASKFARM = Template(r"""# Ensure the cpus-per-task option is propagated to srun commands
+export OMP_NUM_THREADS=$$SLURM_CPUS_PER_TASK
+export SRUN_CPUS_PER_TASK=$$SLURM_CPUS_PER_TASK
+
+# Set up the job environment (the GCC 13.2.0 toolchain the binary was built against)
+module purge; module load GCC/13.2.0 OpenMPI/4.1.6 OpenBLAS/0.3.24 FFTW/3.3.10 ScaLAPACK/2.2.0-fb
 
 # Set ONETEP executable and launcher
 ONETEP_EXEC="$onetep_binary_path"
@@ -290,6 +324,11 @@ srun --cpu-bind=verbose,cores --distribution=block:block -c$$OMP_NUM_THREADS -N 
 ##########################################################################################################################################################################
 """)
 
+RUN_SRUN_TASKFARM = Template(r"""##########################################################################################################################################################################
+srun --cpu-bind=verbose,cores --distribution=block:block -c$$OMP_NUM_THREADS -N $$SLURM_JOB_NUM_NODES -n $$SLURM_NTASKS $$ONETEP_LAUNCHER -e $$ONETEP_EXEC $$SEED_DAT > $$SEED_OUT 2> $$SEED_ERR
+##########################################################################################################################################################################
+""")
+
 RUN_SRUN_SULIS = Template(r"""##########################################################################################################################################################################
 srun -c$$OMP_NUM_THREADS -N $$SLURM_JOB_NUM_NODES -n $$SLURM_NTASKS $$ONETEP_LAUNCHER -c 0 -e $$ONETEP_EXEC $$SEED_DAT > $$SEED_OUT 2> $$SEED_ERR
 ##########################################################################################################################################################################
@@ -357,6 +396,27 @@ srun --hint=nomultithread --distribution=block:block -c$$OMP_NUM_THREADS -N $$SL
 # Machine-specific tiny fragments=
 MACHINE_FRAGMENTS = {
     "Blythe": {
+        "echo_exec": 'echo "--- ONETEP executable is $ONETEP_EXEC."\n'
+                     'echo "--- ONETEP launcher is $ONETEP_LAUNCHER."\n'
+                     'echo "--- workdir is \'$WORK_DIR\'."',
+        "check_exec": r"""# Ensure ONETEP executable exists and is indeed executable.
+if [ ! -x "$ONETEP_EXEC" ]; then
+    echo "!!! $ONETEP_EXEC does not exist or is not executable. Aborting!" >&2
+    touch "%ONETEP_EXE_MISSING"
+    exit 4
+fi
+
+# Ensure onetep_launcher exists and is executable.
+if [ ! -x "$ONETEP_LAUNCHER" ]; then
+    echo "!!! $ONETEP_LAUNCHER does not exist or is not executable. Aborting!" >&2
+    touch "%ONETEP_LAUNCHER_MISSING"
+    exit 5
+fi
+""",
+        "ldd": 'ldd "$ONETEP_EXEC" >"$ldd_file"',
+        "launcher_which": "`which srun`",
+    },
+    "Taskfarm": {
         "echo_exec": 'echo "--- ONETEP executable is $ONETEP_EXEC."\n'
                      'echo "--- ONETEP launcher is $ONETEP_LAUNCHER."\n'
                      'echo "--- workdir is \'$WORK_DIR\'."',
@@ -479,6 +539,12 @@ def write_sbatch(workdir: Path, seed: str, slurm: SlurmParams) -> None:
         sbatch_block = SBATCH_BLYTHE.substitute(ctx)
         modules_block = MODULES_BLYTHE.substitute(ctx)
         run_block = RUN_SRUN_BLYTHE.substitute(ctx)
+
+    elif system == "Taskfarm":
+        comment_block = COMMENTS_TASKFARM
+        sbatch_block = SBATCH_TASKFARM.substitute(ctx)
+        modules_block = MODULES_TASKFARM.substitute(ctx)
+        run_block = RUN_SRUN_TASKFARM.substitute(ctx)
 
     elif system == "Sulis":
         comment_block = COMMENTS_SULIS
