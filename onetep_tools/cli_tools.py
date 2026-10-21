@@ -111,7 +111,7 @@ class OnetepCLI:
 
         # SLURM parameters
         slurm = p.add_argument_group("SLURM parameters")
-        slurm.add_argument("-s", "--system", type=str, default=None, choices=("Blythe", "Sulis", "Isambard-AI", "Archer2"), 
+        slurm.add_argument("-s", "--system", type=str, default=None, choices=("Blythe", "Taskfarm", "Sulis", "Isambard-AI", "Archer2"), 
                            help="Target machine preset for SBATCH generation.",
         )
         slurm.add_argument("--partition", type=str, default=None, help="SLURM partition/queue name.")
